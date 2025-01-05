@@ -1,25 +1,21 @@
 import streamlit as st
 import google.generativeai as genai
-import pdfplumber  # For extracting text from PDFs
-import docx  # For extracting text from Word documents
+import pdfplumber
+import docx
 import tempfile
 from dotenv import load_dotenv
 import os
 
-# Load environment variables from .env file
 load_dotenv()
 
-# Retrieve the API key from the environment variables
 API_KEY = os.getenv("GOOGLE_API_KEY")
 
 if not API_KEY:
     st.error("API Key not found. Please set the GOOGLE_API_KEY in your .env file.")
 else:
-    # Configure the generative model with API key
     genai.configure(api_key=API_KEY)
     model = genai.GenerativeModel('models/gemini-1.0-pro')
 
-    # Language Dictionaries for UI text
     ui_texts = {
         'en': {
             "title": "TalentScout Hiring Assistant",
@@ -83,30 +79,31 @@ else:
         }
     }
 
-    # Initialize Streamlit app
     selected_language = st.sidebar.selectbox("Select Language", options=["English", "Hindi", "Spanish", "French", "German"])
 
-    # Mapping language selection to the dictionary keys
     language_map = {"English": "en", "Hindi": "hi", "Spanish": "es", "French": "fr", "German": "de"}
     selected_language_code = language_map[selected_language]
 
-    # Store the language code in session_state to keep track of it
     if 'selected_language_code' not in st.session_state:
         st.session_state.selected_language_code = selected_language_code
     elif st.session_state.selected_language_code != selected_language_code:
         st.session_state.selected_language_code = selected_language_code
-        # When language changes, we reset 'greeted' to False so it re-triggers greeting logic
         st.session_state.greeted = False
 
-    # Title and sidebar content update based on the selected language
+    if 'chat_history' not in st.session_state:
+        st.session_state.chat_history = {}
+
+    if 'name' in st.session_state:
+        name = st.session_state.name
+        if name not in st.session_state.chat_history:
+            st.session_state.chat_history[name] = []
+
     st.title(ui_texts[st.session_state.selected_language_code]["title"])
     st.sidebar.title(ui_texts[st.session_state.selected_language_code]["sidebar_title"])
 
-    # Resume Upload and Processing
     st.sidebar.subheader(ui_texts[st.session_state.selected_language_code]["upload_title"])
     uploaded_file = st.sidebar.file_uploader("Choose your resume", type=['pdf', 'docx'])
 
-    # Extract text from the uploaded resume
     def extract_resume_text(uploaded_file):
         text = ""
         if uploaded_file is not None:
@@ -114,7 +111,6 @@ else:
                 temp_file.write(uploaded_file.read())
                 temp_path = temp_file.name
 
-                # Extract text based on file type
                 if uploaded_file.name.endswith(".pdf"):
                     with pdfplumber.open(temp_path) as pdf:
                         for page in pdf.pages:
@@ -127,7 +123,6 @@ else:
 
     resume_text = extract_resume_text(uploaded_file)
 
-    # Sidebar form to gather candidate information
     with st.sidebar.form("candidate_form"):
         name = st.text_input("Full Name")
         email = st.text_input("Email Address")
@@ -141,7 +136,6 @@ else:
         tech_stack = st.text_area("Tech Stack (e.g., Python, Django, MySQL)")
         submit = st.form_submit_button("Submit")
 
-    # Generate responses in selected language
     def generate_response_in_language(prompt, language_code):
         language_name = {
             'en': 'English',
@@ -149,42 +143,36 @@ else:
             'es': 'Spanish',
             'fr': 'French',
             'de': 'German'
-        }.get(language_code, 'English')  # Default to English if not found
+        }.get(language_code, 'English')
         language_instruction = f"Please provide your response in {language_name}."
         return model.generate_content(language_instruction + " " + prompt).text
 
-    # Personalized Greeting and Intro
     if submit and not st.session_state.get("greeted", False):
         st.session_state.greeted = True
         st.write(f"**{name}! 👋**")
         st.write(f"{ui_texts[st.session_state.selected_language_code]['greeting']} **{location}**?")
         st.write(f"Your **{qualification}** from **{college_name}** sounds impressive! Let's get started. 😊")
 
-        # Display resume text if available
         if resume_text:
             st.write(f"📄 **{ui_texts[st.session_state.selected_language_code]['resume_extracted']}**")
-            st.write(resume_text[:300] + "...")  # Show preview of resume
+            st.write(resume_text[:300] + "...")
         else:
             st.write("No resume uploaded or extracted. Proceeding with available details.")
 
-        # Generate technical and personalized questions based on the resume and other information
-        tech_stack_list = [tech.strip() for tech in tech_stack.split(',')]  # Split the stack into individual technologies
+        tech_stack_list = [tech.strip() for tech in tech_stack.split(',')]
 
-        # Generate Technical Questions from Tech Stack
         for tech in tech_stack_list:
             tech_prompt = f"Based on the candidate's experience and skills in {tech}, generate 3-5 technical questions."
             response_tech = generate_response_in_language(tech_prompt, st.session_state.selected_language_code)
             st.write(f"### Questions related to {tech}:")
             st.write(response_tech)
 
-        # Generate Resume-Based Questions
         if resume_text:
             resume_prompt = f"Based on the resume of {name}, generate personalized questions that probe into the candidate's experience with projects, skills, and work history. Resume content: {resume_text}"
             response_resume = generate_response_in_language(resume_prompt, st.session_state.selected_language_code)
             st.write(f"### {ui_texts[st.session_state.selected_language_code]['personalized_questions']}")
             st.write(response_resume)
 
-        # Add Role-Specific Question Generation
         if position:
             role_prompt = f"Based on the position {position} that the candidate, {name}, is applying for, generate 5-7 interview questions."
             response_role = generate_response_in_language(role_prompt, st.session_state.selected_language_code)
@@ -192,7 +180,6 @@ else:
             st.write(f"### {ui_texts[st.session_state.selected_language_code]['interview_questions']} {position}")
             st.write(response_role)
 
-    # Chatbot conversation logic
     st.subheader(ui_texts[st.session_state.selected_language_code]["chat_with"])
     chat_input = st.text_input("Your Message")
 
@@ -205,15 +192,15 @@ else:
             prompt = f"You are a helpful recruitment assistant. Respond to the following user input: {chat_input}. Use candidate details like name ({name}), location ({location}), qualification ({qualification}), and college ({college_name}) naturally during the response."
             response = generate_response_in_language(prompt, st.session_state.selected_language_code)
 
-        # Prepend the new question and response to the chat history
-        st.session_state.chat_history.insert(0, (chat_input, response))
+        if name not in st.session_state.chat_history:
+            st.session_state.chat_history[name] = []
 
-        # Display full chat history (recent questions at the top)
-        for chat, reply in st.session_state.chat_history:
-            st.write(f"You: {chat}")
-            st.write(f"Assistant: {reply}")
+        st.session_state.chat_history[name].append(chat_input)
+        st.session_state.chat_history[name].append(response)
 
-    # End conversation logic
+        for message in reversed(st.session_state.chat_history[name]):
+            st.write(f"You: {message}")
+    
     st.write("---")
     st.write(ui_texts[st.session_state.selected_language_code]["exit_message"])
     if chat_input.lower() == "exit":
